@@ -301,7 +301,7 @@
       </div>
       <div class="cmd-row">
         <span class="prompt">&gt;_</span>
-        <code id="cm-cmd" class="mono">curl -fsSL https://raw.githubusercontent.com/darkstardevx/cybermeta/main/install.sh | sh</code>
+        <code id="cm-cmd" class="mono">curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh</code>
         <button class="copy-btn" onclick="cmCopy(this)" aria-label="Copy command">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
@@ -332,8 +332,8 @@
 
 <script>
   const CMDS = {
-    linux: 'curl -fsSL https://raw.githubusercontent.com/darkstardevx/cybermeta/main/install.sh | sh',
-    macos: 'curl -fsSL https://raw.githubusercontent.com/darkstardevx/cybermeta/main/install.sh | sh'
+    linux: 'curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh',
+    macos: 'curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh'
   };
   function cmSetOs(os) {
     document.querySelectorAll('.os-tab').forEach(t => t.classList.toggle('active', t.dataset.os === os));
@@ -348,7 +348,7 @@
   }
   try { if (/Mac OS X|Macintosh/.test(navigator.userAgent)) cmSetOs('macos'); } catch (e) {}
 
-  fetch('https://api.github.com/repos/darkstardevx/cybermeta/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
+  fetch('https://api.github.com/repos/cybercore-tech/cybermeta/releases/latest', { headers: { Accept: 'application/vnd.github+json' } })
     .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(rel => {
       const dl = (rel.assets || [])
