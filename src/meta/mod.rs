@@ -1,10 +1,14 @@
 //! EXIF read / write / strip / spoof / export — no pixel re-encode.
 
 mod presets;
+pub mod summary;
 pub mod tags;
+pub mod xmp;
 
 pub use presets::{apply_preset, list_presets, Preset};
+pub use summary::{summarize, Gps, Summary};
 pub use tags::{parse_set_assignment, TagGroup, TagView};
+pub use xmp::XmpDoc;
 
 use anyhow::{bail, Context, Result};
 use little_exif::exif_tag::ExifTag;
@@ -60,6 +64,11 @@ impl MetaDoc {
             metadata,
             dirty: false,
         })
+    }
+
+    /// Typed summary of camera, exposure, capture time and location.
+    pub fn summary(&self) -> Summary {
+        summarize(&self.metadata)
     }
 
     pub fn tags(&self) -> Vec<TagView> {
