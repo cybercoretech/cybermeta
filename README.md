@@ -3,22 +3,22 @@
 </p>
 
 <p align="center">
-  <a href="https://cybercore-tech.github.io/cybermeta/">Site →</a>
+  <a href="https://cybercoretech.github.io/cybermeta/">Site →</a>
 </p>
 
-[![CI](https://github.com/cybercore-tech/cybermeta/actions/workflows/ci.yml/badge.svg)](https://github.com/cybercore-tech/cybermeta/actions/workflows/ci.yml)
-[![Release](https://github.com/cybercore-tech/cybermeta/actions/workflows/release.yml/badge.svg)](https://github.com/cybercore-tech/cybermeta/actions/workflows/release.yml)
+[![CI](https://github.com/cybercoretech/cybermeta/actions/workflows/ci.yml/badge.svg)](https://github.com/cybercoretech/cybermeta/actions/workflows/ci.yml)
+[![Release](https://github.com/cybercoretech/cybermeta/actions/workflows/release.yml/badge.svg)](https://github.com/cybercoretech/cybermeta/actions/workflows/release.yml)
 
 # cybermeta
 
 TUI-first EXIF workstation for the **Cybercore Systems Framework**.
 
-Read, edit, strip, and spoof image metadata without re-encoding pixels. Interactive UI uses the embedded CYBERGRID palette from [`cybercore`](https://github.com/cybercore-tech/cybercore) (`~/.sysops/cybercore`). CLI subcommands stay machine-parsable for scripts and pipes.
+Read, edit, strip, and spoof image metadata without re-encoding pixels. Interactive UI uses the embedded CYBERGRID palette from [`cybercore`](https://github.com/cybercoretech/cybercore) (`~/.sysops/cybercore`). CLI subcommands stay machine-parsable for scripts and pipes.
 
 ## 📦 Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh
 ```
 
 Downloads the latest release for your platform (Linux or macOS, x86_64
