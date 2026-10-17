@@ -172,7 +172,7 @@
     <div class="navlinks">
       <a class="navlink" href="#presets">Presets</a>
       <a class="navlink" href="#install">Install</a>
-      <a class="navlink btn btn-ghost" style="padding:7px 15px;font-size:13px;" href="https://github.com/cybercore-tech/cybermeta" target="_blank" rel="noopener">GitHub</a>
+      <a class="navlink btn btn-ghost" style="padding:7px 15px;font-size:13px;" href="https://github.com/cybercoretech/cybermeta" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
 </nav>
@@ -190,7 +190,7 @@
       <p class="hero-sub">Camera make, model, timestamps, GPS coordinates — all riding invisibly in the file. cybermeta reads it, edits it, strips it, or spoofs it entirely. <strong>Pixels never get re-encoded.</strong></p>
       <div class="hero-cta">
         <a class="btn btn-primary" href="#install">Install cybermeta</a>
-        <a class="btn btn-ghost" href="https://github.com/cybercore-tech/cybermeta" target="_blank" rel="noopener">View source</a>
+        <a class="btn btn-ghost" href="https://github.com/cybercoretech/cybermeta" target="_blank" rel="noopener">View source</a>
       </div>
     </div>
     <div class="exhibit">
@@ -301,7 +301,7 @@
       </div>
       <div class="cmd-row">
         <span class="prompt">&gt;_</span>
-        <code id="cm-cmd" class="mono">curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh</code>
+        <code id="cm-cmd" class="mono">curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh</code>
         <button class="copy-btn" onclick="cmCopy(this)" aria-label="Copy command">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </button>
@@ -310,13 +310,13 @@
     </div>
     <p class="dl-count" id="dl-count">&hellip;</p>
     <div class="install-more">
-      <a href="https://github.com/cybercore-tech/cybermeta#usage" target="_blank" rel="noopener">More install options &amp; manual builds →</a>
+      <a href="https://github.com/cybercoretech/cybermeta#usage" target="_blank" rel="noopener">More install options &amp; manual builds →</a>
     </div>
   </div>
 </section>
 
 
-<!-- Cybercore Tech contact block: one shared source for every site (cybercore-tech.github.io/kit/contact.js + data/contact.json) -->
+<!-- Cybercore Tech contact block: one shared source for every site (cybercoretech.github.io/kit/contact.js + data/contact.json) -->
 <section class="cc-contact-band" aria-label="Contact Cybercore Tech" style="--panel:var(--void);--cyan:var(--teal);--pink:var(--coral);--acid:var(--teal);--orange:var(--coral);--purple:var(--coral);width:min(1120px,calc(100% - 2.5rem));margin:4.5rem auto 0;padding:2.25rem 0 1.75rem;border-top:1px solid var(--line,#32303e)">
   <cybercore-contact repo="cybermeta" bare><a href="mailto:dev@cybercoretech.net">dev@cybercoretech.net</a></cybercore-contact>
 </section>
@@ -327,8 +327,8 @@
       <span>cybermeta &middot; MIT licensed</span>
     </div>
     <div class="foot-links">
-      <a href="https://github.com/cybercore-tech/cybermeta" target="_blank" rel="noopener">GitHub</a>
-      <a href="https://github.com/cybercore-tech/cybermeta/releases" target="_blank" rel="noopener">Releases</a>
+      <a href="https://github.com/cybercoretech/cybermeta" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://github.com/cybercoretech/cybermeta/releases" target="_blank" rel="noopener">Releases</a>
       <a href="#install">Install</a>
     </div>
     <div class="foot-family">Cybercore family</div>
@@ -337,8 +337,8 @@
 
 <script>
   const CMDS = {
-    linux: 'curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh',
-    macos: 'curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh'
+    linux: 'curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh',
+    macos: 'curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh'
   };
   function cmSetOs(os) {
     document.querySelectorAll('.os-tab').forEach(t => t.classList.toggle('active', t.dataset.os === os));
@@ -363,4 +363,4 @@
     })
     .catch(() => { document.getElementById('dl-count').textContent = ''; });
 </script>
-<script type="module" src="https://cybercore-tech.github.io/kit/contact.js"></script>
+<script type="module" src="https://cybercoretech.github.io/kit/contact.js"></script>
