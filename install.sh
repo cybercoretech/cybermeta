@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install cybermeta from the latest GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/cybercore-tech/cybermeta/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh
 #
 # Supported: Linux (x86_64, aarch64) and macOS (x86_64, aarch64).
 set -eu
