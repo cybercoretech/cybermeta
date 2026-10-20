@@ -25,7 +25,7 @@
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/icon.svg" alt=""><span>CYBERMETA<br><small>TUI · CLI · 0.3</small></span></a>
+    <a class="brand" href="#top"><img src="assets/icon.svg" alt=""><span>CYBERMETA<br><small>TUI · CLI · 0.3 PREVIEW</small></span></a>
     <nav class="main-nav" aria-label="Main navigation">
       <a href="#leaks">LEAKS</a><a href="#lab">LIVE LAB</a><a href="#tui">TUI</a><a href="#cli">CLI</a><a href="#install">INSTALL</a>
     </nav>
@@ -44,6 +44,7 @@
       <div>
         <p class="eyebrow">CYBERCORE SYSTEMS FRAMEWORK · LINUX · MACOS · ANDROID</p>
         <h1><span class="glitch" data-text="Find what your">Find what your</span><br>photos <span class="redact">leak.</span></h1>
+        <p class="eyebrow">V0.3 SOURCE IN REVIEW · <a href="https://github.com/cybercoretech/cybermeta/pull/1">VIEW PULL REQUEST ↗</a></p>
         <p class="lede">A privacy audit and a <strong>lossless scrubber</strong> for JPEG, PNG and WebP. GPS, serial numbers, names, timestamps, hidden thumbnails and motion-photo video, found and removed. Then it <strong>checks its own work</strong> with a second parser.</p>
         <div class="cta">
           <a class="btn primary" href="#install">⬇ INSTALL</a>
@@ -63,7 +64,7 @@
       <div class="section-head reveal">
         <p class="eyebrow">01 / WHAT IT FINDS</p>
         <h2>Everything around <em>the picture.</em></h2>
-        <p>Version 0.2's <code>strip --all</code> only cleared EXIF. 0.3 rebuilds the file from its picture data, so XMP, IPTC, comments and anything appended after the image go too. Tap a card for details.</p>
+        <p>Version 0.2's <code>strip --all</code> only cleared EXIF. The v0.3 preview rebuilds the file from its picture data, so XMP, IPTC, comments and anything appended after the image go too. This source change is still in review; tap a card for details.</p>
       </div>
       <div class="leaks" id="leakGrid"></div>
     </div>
@@ -175,7 +176,7 @@
       <div class="section-head reveal">
         <p class="eyebrow">05 / INSTALL</p>
         <h2>One line. <em>Checksummed.</em></h2>
-        <p>Downloads the latest release for Linux or macOS (x86_64 or aarch64), verifies its SHA-256 and installs to <code>~/.local/bin</code>.</p>
+        <p>The latest published CLI release is v0.1.0. The curl installer downloads that release for Linux or macOS (x86_64 or aarch64), verifies its SHA-256 and installs to <code>~/.local/bin</code>. The v0.3.0 source is in review and is not released yet.</p>
       </div>
       <div class="install reveal">
         <div class="card">
@@ -183,10 +184,10 @@
           <div class="tabs" role="tablist">
             <button class="tab on" type="button" data-cmd="curl">CURL INSTALL</button>
             <button class="tab" type="button" data-cmd="source">FROM SOURCE</button>
-            <button class="tab" type="button" data-cmd="lib">AS A LIBRARY</button>
+            <button class="tab" type="button" data-cmd="lib">ENGINE PREVIEW</button>
           </div>
           <div id="cmds"></div>
-          <p style="margin-top:.8rem;font-size:.9rem">The end-to-end tests have exiftool write every leak it knows into real JPEG, PNG and WebP files. After a scrub, exiftool must find nothing but rotation.</p>
+          <p style="margin-top:.8rem;font-size:.9rem">The engine preview command points to the v0.3.0 review branch. Use it as an unreleased preview; the stable library tag will follow the source review.</p>
         </div>
         <div class="card">
           <h3>📱 On your phone</h3>
@@ -231,7 +232,7 @@
   window.CM_CMDS = {
     curl: ["curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh"],
     source: ["git clone https://github.com/cybercoretech/cybermeta && cd cybermeta", "cargo install --path ."],
-    lib: ['cybermeta = { git = "https://github.com/cybercoretech/cybermeta", tag = "v0.3.0", default-features = false }'],
+    lib: ['cybermeta = { git = "https://github.com/cybercoretech/cybermeta", branch = "feat/privacy-scrub", default-features = false }'],
   };
 </script>
 <script src="assets/site.js"></script>
