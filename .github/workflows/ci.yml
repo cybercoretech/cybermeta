@@ -58,5 +58,11 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Install exiftool and ImageMagick (end-to-end tests)
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl imagemagick
+
       - name: Test
         run: cargo test --all-targets
+
+      - name: Engine builds without the CLI/TUI (as the Android app uses it)
+        run: cargo build --lib --no-default-features
