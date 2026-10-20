@@ -5,7 +5,10 @@ use std::process::ExitCode;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use cybermeta::meta::xmp::valid_field_name;
-use cybermeta::meta::{list_presets, ExportFormat, MetaDoc, Preset, XmpDoc};
+use cybermeta::meta::{
+    collect_images, list_presets, write_atomic, Audit, ExportFormat, Keep, MetaDoc, Outcome,
+    Preset, Severity, XmpDoc,
+};
 use cybermeta::tui;
 use std::collections::BTreeMap;
 
@@ -41,13 +44,48 @@ enum Commands {
         #[arg(short = 'f', long, value_enum, default_value_t = OutFormat::Json)]
         format: OutFormat,
     },
-    /// Strip GPS and/or all non-structural metadata
+    /// Privacy report: what each photo gives away (GPS, serials, names,
+    /// times, thumbnails, hidden data)
+    Audit {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        /// Walk directories all the way down
+        #[arg(short = 'r', long)]
+        recursive: bool,
+        #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+        format: ReportFormat,
+    },
+    /// Remove all metadata from photos and folders, losslessly, and check
+    /// the result
+    Scrub {
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+        #[arg(short = 'r', long)]
+        recursive: bool,
+        /// What may stay: icc, orientation, date (comma-separated) or none
+        #[arg(long, default_value = "icc,orientation")]
+        keep: String,
+        /// Output file (single input only)
+        #[arg(short = 'o', long)]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        in_place: bool,
+        /// Report what would be removed; write nothing
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+        format: ReportFormat,
+    },
+    /// Strip location (--gps) or everything (--all, same as scrub)
     Strip {
         file: PathBuf,
         #[arg(long, conflicts_with = "all")]
         gps: bool,
         #[arg(long)]
         all: bool,
+        /// With --all: what may stay (icc, orientation, date, none)
+        #[arg(long, default_value = "icc,orientation")]
+        keep: String,
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
         #[arg(long)]
@@ -67,11 +105,15 @@ enum Commands {
         #[command(subcommand)]
         action: XmpAction,
     },
-    /// Apply a named scrub/spoof preset
+    /// Apply a named scrub/spoof preset, or shift every timestamp
     Spoof {
         file: Option<PathBuf>,
-        #[arg(long, required_unless_present = "list")]
+        #[arg(long, required_unless_present_any = ["list", "shift"], conflicts_with = "shift")]
         preset: Option<String>,
+        /// Move every EXIF timestamp, e.g. +3d, -2h30m (drops XMP/IPTC, which
+        /// carry their own dates)
+        #[arg(long, allow_hyphen_values = true)]
+        shift: Option<String>,
         #[arg(short = 'o', long)]
         output: Option<PathBuf>,
         #[arg(long)]
@@ -111,6 +153,12 @@ enum XmpAction {
     Read { file: PathBuf },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ReportFormat {
+    Text,
+    Json,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutFormat {
     Json,
@@ -143,7 +191,7 @@ fn real_main() -> Result<()> {
         None => {
             let path = cli.file;
             if path.is_none() && !io::stdout().is_terminal() {
-                bail!("no TTY and no subcommand — use show/export/strip/set/spoof/xmp");
+                bail!("no TTY and no subcommand — use audit/scrub/show/export/strip/set/spoof/xmp");
             }
             tui::run(path)
         }
@@ -170,25 +218,45 @@ fn real_main() -> Result<()> {
             file,
             gps,
             all,
+            keep,
             output,
             in_place,
         }) => {
             if !gps && !all {
-                bail!("specify --gps and/or --all");
+                bail!("specify --gps or --all");
             }
             let mut doc = MetaDoc::open(&file)?;
-            if gps {
-                let n = doc.strip_gps();
-                eprintln!("stripped {n} GPS-related tags");
-            }
-            if all {
-                let n = doc.strip_all();
-                eprintln!("stripped {n} non-structural tags");
-            }
+            let outcome = if all {
+                doc.scrub(&Keep::parse(&keep)?)?
+            } else {
+                doc.strip_gps()?
+            };
             let dest = doc.save(output.as_deref(), in_place)?;
-            eprintln!("wrote {}", dest.display());
+            print_outcome(&dest, &outcome);
             Ok(())
         }
+        Some(Commands::Audit {
+            paths,
+            recursive,
+            format,
+        }) => run_audit(&paths, recursive, format),
+        Some(Commands::Scrub {
+            paths,
+            recursive,
+            keep,
+            output,
+            in_place,
+            dry_run,
+            format,
+        }) => run_scrub(
+            &paths,
+            recursive,
+            &Keep::parse(&keep)?,
+            output.as_deref(),
+            in_place,
+            dry_run,
+            format,
+        ),
         Some(Commands::Set {
             file,
             assignment,
@@ -204,6 +272,7 @@ fn real_main() -> Result<()> {
         Some(Commands::Spoof {
             file,
             preset,
+            shift,
             output,
             in_place,
             list,
@@ -212,28 +281,202 @@ fn real_main() -> Result<()> {
                 for p in list_presets() {
                     println!("{}\t{}", p.as_str(), p.description());
                 }
+                println!("--shift OFFSET\tMove every EXIF timestamp (e.g. +3d, -2h30m)");
                 return Ok(());
             }
             let file = file.context("FILE is required unless --list")?;
-            let preset_name = preset.context("--preset is required unless --list")?;
-            let Some(preset) = Preset::parse(&preset_name) else {
-                bail!(
-                    "unknown preset `{preset_name}` — try: {}",
-                    list_presets()
-                        .iter()
-                        .map(|p| p.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                );
-            };
             let mut doc =
                 MetaDoc::open(&file).with_context(|| format!("open {}", file.display()))?;
-            doc.apply_preset(preset)?;
+            let (label, outcome) = if let Some(shift) = shift {
+                let seconds = cybermeta::meta::scrub::parse_shift(&shift)?;
+                ("date-shift".to_string(), doc.date_shift(seconds)?)
+            } else {
+                let preset_name = preset.context("--preset or --shift is required")?;
+                let Some(preset) = Preset::parse(&preset_name) else {
+                    bail!(
+                        "unknown preset `{preset_name}` — try: {}",
+                        list_presets()
+                            .iter()
+                            .map(|p| p.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                };
+                (preset.as_str().to_string(), doc.apply_preset(preset)?)
+            };
             let dest = doc.save(output.as_deref(), in_place)?;
-            eprintln!("applied {} → {}", preset.as_str(), dest.display());
+            eprintln!("applied {label}");
+            print_outcome(&dest, &outcome);
             Ok(())
         }
     }
+}
+
+fn print_outcome(dest: &std::path::Path, o: &Outcome) {
+    let removed: usize = o.removed.iter().map(|r| r.bytes).sum();
+    eprintln!(
+        "wrote {} — cleared {} finding(s), removed {} block(s) ({})",
+        dest.display(),
+        o.cleared(),
+        o.removed.len(),
+        cybermeta::meta::audit::human_bytes(removed)
+    );
+    for r in &o.removed {
+        eprintln!(
+            "  - {} [{}] {}",
+            r.kind_label(),
+            r.label,
+            cybermeta::meta::audit::human_bytes(r.bytes)
+        );
+    }
+    for n in &o.notes {
+        eprintln!("  note: {n}");
+    }
+    if !o.after.findings.is_empty() {
+        eprintln!("  still in the file:");
+        for f in &o.after.findings {
+            eprintln!(
+                "    {} {} {}: {}",
+                f.severity.as_str(),
+                f.source,
+                f.label,
+                f.value
+            );
+        }
+    }
+}
+
+fn risk_text(risk: Option<Severity>) -> &'static str {
+    match risk {
+        None => "CLEAN",
+        Some(Severity::Low) => "LOW",
+        Some(Severity::Medium) => "MEDIUM",
+        Some(Severity::High) => "HIGH",
+    }
+}
+
+fn print_audit(path: &std::path::Path, a: &Audit) {
+    println!(
+        "{}  [{}] {}",
+        path.display(),
+        risk_text(a.risk),
+        a.format.as_str()
+    );
+    if let Some(d) = &a.damaged {
+        println!("  ! damaged container: {d}");
+    }
+    if !a.scrubbable {
+        println!("  ! {} can't be scrubbed losslessly yet", a.format.as_str());
+    }
+    for f in &a.findings {
+        println!(
+            "  {:<6} {:<10} {:<12} {}: {}",
+            f.severity.as_str(),
+            f.category.as_str(),
+            f.source,
+            f.label,
+            f.value
+        );
+    }
+    if let Some(g) = &a.gps {
+        println!("  map: {}", g.map_url);
+    }
+}
+
+fn run_audit(paths: &[PathBuf], recursive: bool, format: ReportFormat) -> Result<()> {
+    let files = collect_images(paths, recursive)?;
+    let mut reports = Vec::new();
+    for file in &files {
+        let bytes = std::fs::read(file).with_context(|| format!("read {}", file.display()))?;
+        let a = cybermeta::meta::audit::audit(&bytes);
+        if format == ReportFormat::Text {
+            print_audit(file, &a);
+        }
+        reports.push(serde_json::json!({ "path": file, "audit": a }));
+    }
+    if format == ReportFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&reports)?);
+    } else if files.len() > 1 {
+        let risky = reports
+            .iter()
+            .filter(|r| r["audit"]["risk"] == "high")
+            .count();
+        println!("\n{} file(s), {risky} high risk", files.len());
+    }
+    Ok(())
+}
+
+fn run_scrub(
+    paths: &[PathBuf],
+    recursive: bool,
+    keep: &Keep,
+    output: Option<&std::path::Path>,
+    in_place: bool,
+    dry_run: bool,
+    format: ReportFormat,
+) -> Result<()> {
+    let files = collect_images(paths, recursive)?;
+    if output.is_some() && files.len() != 1 {
+        bail!("-o works with a single file; use --in-place or the default *.cybermeta.* names");
+    }
+    let (mut ok, mut failed) = (0, 0);
+    let mut reports = Vec::new();
+    for file in &files {
+        let result = (|| -> Result<(PathBuf, Outcome)> {
+            let bytes = std::fs::read(file).with_context(|| format!("read {}", file.display()))?;
+            let outcome = cybermeta::meta::scrub::scrub(&bytes, keep)?;
+            let dest = cybermeta::meta::resolve_output(file, output, in_place)?;
+            if !dry_run {
+                write_atomic(&dest, &outcome.bytes)?;
+            }
+            Ok((dest, outcome))
+        })();
+        match result {
+            Ok((dest, outcome)) => {
+                ok += 1;
+                if format == ReportFormat::Text {
+                    if dry_run {
+                        eprintln!("{} (dry run)", file.display());
+                        for r in &outcome.removed {
+                            eprintln!("  - {} [{}]", r.kind_label(), r.label);
+                        }
+                    } else {
+                        print_outcome(&dest, &outcome);
+                    }
+                }
+                reports.push(serde_json::json!({
+                    "path": file,
+                    "output": if dry_run { None } else { Some(&dest) },
+                    "ok": true,
+                    "removed": outcome.removed,
+                    "before": outcome.before,
+                    "after": outcome.after,
+                    "notes": outcome.notes,
+                }));
+            }
+            Err(err) => {
+                failed += 1;
+                if format == ReportFormat::Text {
+                    eprintln!("{}: {err:#}", file.display());
+                }
+                reports.push(
+                    serde_json::json!({ "path": file, "ok": false, "error": format!("{err:#}") }),
+                );
+            }
+        }
+    }
+    if format == ReportFormat::Json {
+        println!("{}", serde_json::to_string_pretty(&reports)?);
+    } else if files.len() > 1 {
+        eprintln!(
+            "\n{ok} scrubbed, {failed} failed (kept: {})",
+            keep.describe()
+        );
+    }
+    if failed > 0 {
+        bail!("{failed} file(s) could not be scrubbed");
+    }
+    Ok(())
 }
 
 fn run_xmp(action: XmpAction) -> Result<()> {

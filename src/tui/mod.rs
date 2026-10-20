@@ -1,6 +1,15 @@
-//! Interactive EXIF workstation (ratatui + CYBERGRID theme).
+//! Interactive metadata workstation (ratatui + CYBERGRID theme).
+//!
+//! Open a photo to browse its tags beside a privacy panel that shows what
+//! the file gives away; open a folder to see every photo's risk and scrub
+//! them all at once. Changes stay in memory until you save.
 
-use crate::meta::{list_presets, MetaDoc, Preset, TagView};
+use crate::meta::audit::human_bytes;
+use crate::meta::scrub::{self, parse_shift};
+use crate::meta::{
+    collect_images, list_presets, resolve_output, write_atomic, Audit, Keep, MetaDoc, Outcome,
+    Preset, Severity, TagView,
+};
 use crate::theme::Theme;
 use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -10,7 +19,7 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Terminal;
@@ -24,14 +33,20 @@ enum Mode {
     Filter,
     Edit,
     PathInput,
-    ConfirmStripAll,
+    ShiftInput,
+    /// Preview of a full scrub, waiting for y/n.
+    ConfirmScrub,
     PresetPicker,
+    /// Before/after of the last operation.
+    Report,
     Message,
+    Folder,
+    ConfirmBatch,
 }
 
 pub fn run(initial: Option<PathBuf>) -> Result<()> {
     let mut terminal = setup()?;
-    let result = App::new(initial)?.run(&mut terminal);
+    let result = App::new(initial).and_then(|mut app| app.run(&mut terminal));
     restore(&mut terminal)?;
     result
 }
@@ -51,10 +66,22 @@ fn restore(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
     Ok(())
 }
 
+struct FolderEntry {
+    path: PathBuf,
+    audit: std::result::Result<Audit, String>,
+}
+
+struct Folder {
+    dir: PathBuf,
+    entries: Vec<FolderEntry>,
+    state: ListState,
+}
+
 struct App {
     theme: Theme,
     mode: Mode,
     doc: Option<MetaDoc>,
+    audit: Option<Audit>,
     tags: Vec<TagView>,
     filtered: Vec<usize>,
     list_state: ListState,
@@ -63,6 +90,12 @@ struct App {
     message: String,
     presets: Vec<Preset>,
     preset_idx: usize,
+    keep: Keep,
+    /// A dry-run scrub waiting for confirmation.
+    preview: Option<Outcome>,
+    /// The last applied operation, for the report.
+    report: Option<(String, Outcome)>,
+    folder: Option<Folder>,
 }
 
 impl App {
@@ -72,6 +105,7 @@ impl App {
             theme,
             mode: Mode::Browse,
             doc: None,
+            audit: None,
             tags: Vec::new(),
             filtered: Vec::new(),
             list_state: ListState::default(),
@@ -80,17 +114,25 @@ impl App {
             message: String::new(),
             presets: list_presets().to_vec(),
             preset_idx: 0,
+            keep: Keep::default(),
+            preview: None,
+            report: None,
+            folder: None,
         };
-        if let Some(path) = initial {
-            app.open_path(&path)?;
-        } else {
-            app.mode = Mode::PathInput;
-            app.message = "enter image path".into();
+        match initial {
+            Some(path) => app.open_path(&path)?,
+            None => {
+                app.mode = Mode::PathInput;
+                app.message = "enter an image or folder path".into();
+            }
         }
         Ok(app)
     }
 
     fn open_path(&mut self, path: &Path) -> Result<()> {
+        if path.is_dir() {
+            return self.open_folder(path);
+        }
         let doc = MetaDoc::open(path)?;
         self.reload_from(doc);
         self.mode = Mode::Browse;
@@ -98,14 +140,50 @@ impl App {
         Ok(())
     }
 
+    fn open_folder(&mut self, dir: &Path) -> Result<()> {
+        let files = collect_images(&[dir.to_path_buf()], false)?;
+        let entries = files
+            .into_iter()
+            .map(|path| {
+                let audit = std::fs::read(&path)
+                    .map(|b| crate::meta::audit::audit(&b))
+                    .map_err(|e| e.to_string());
+                FolderEntry { path, audit }
+            })
+            .collect::<Vec<_>>();
+        let mut state = ListState::default();
+        if !entries.is_empty() {
+            state.select(Some(0));
+        }
+        let high = entries
+            .iter()
+            .filter(|e| matches!(&e.audit, Ok(a) if a.risk == Some(Severity::High)))
+            .count();
+        self.message = format!(
+            "{} photo(s) in {}, {high} high risk",
+            entries.len(),
+            dir.display()
+        );
+        self.folder = Some(Folder {
+            dir: dir.to_path_buf(),
+            entries,
+            state,
+        });
+        self.doc = None;
+        self.mode = Mode::Folder;
+        Ok(())
+    }
+
     fn reload_from(&mut self, doc: MetaDoc) {
+        self.audit = Some(doc.audit());
         self.tags = doc.tags();
         self.doc = Some(doc);
         self.refilter();
     }
 
-    fn refresh_tags(&mut self) {
+    fn refresh(&mut self) {
         if let Some(doc) = &self.doc {
+            self.audit = Some(doc.audit());
             self.tags = doc.tags();
             self.refilter();
         }
@@ -168,11 +246,16 @@ impl App {
             Mode::PathInput => self.handle_path_input(code),
             Mode::Filter => self.handle_filter(code),
             Mode::Edit => self.handle_edit(code),
-            Mode::ConfirmStripAll => self.handle_confirm_strip(code),
+            Mode::ShiftInput => self.handle_shift(code),
+            Mode::ConfirmScrub => self.handle_confirm_scrub(code),
             Mode::PresetPicker => self.handle_presets(code),
-            Mode::Message => {
+            Mode::Folder => self.handle_folder(code),
+            Mode::ConfirmBatch => self.handle_confirm_batch(code),
+            Mode::Report | Mode::Message => {
                 self.mode = if self.doc.is_some() {
                     Mode::Browse
+                } else if self.folder.is_some() {
+                    Mode::Folder
                 } else {
                     Mode::PathInput
                 };
@@ -182,9 +265,33 @@ impl App {
         }
     }
 
+    fn show_report(&mut self, label: &str, result: Result<Outcome>) {
+        match result {
+            Ok(outcome) => {
+                self.refresh();
+                self.message = format!(
+                    "{label}: cleared {} finding(s) (unsaved)",
+                    outcome.cleared()
+                );
+                self.report = Some((label.to_string(), outcome));
+                self.mode = Mode::Report;
+            }
+            Err(err) => {
+                self.message = format!("{label} failed: {err:#}");
+                self.mode = Mode::Message;
+            }
+        }
+    }
+
     fn handle_browse(&mut self, code: KeyCode) -> Result<bool> {
         match code {
-            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+            KeyCode::Char('q') => return Ok(true),
+            KeyCode::Esc | KeyCode::Char('b') if self.folder.is_some() => {
+                self.doc = None;
+                self.mode = Mode::Folder;
+                self.message = "back to folder".into();
+            }
+            KeyCode::Esc => return Ok(true),
             KeyCode::Char('j') | KeyCode::Down => self.move_sel(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_sel(-1),
             KeyCode::Char('/') => {
@@ -194,7 +301,7 @@ impl App {
             KeyCode::Char('o') => {
                 self.mode = Mode::PathInput;
                 self.input.clear();
-                self.message = "open path".into();
+                self.message = "open image or folder".into();
             }
             KeyCode::Enter => {
                 let editable = self
@@ -212,19 +319,51 @@ impl App {
             }
             KeyCode::Char('g') => {
                 if let Some(doc) = self.doc.as_mut() {
-                    let n = doc.strip_gps();
-                    self.refresh_tags();
-                    self.message = format!("stripped {n} GPS-related tags (unsaved)");
+                    let r = doc.strip_gps();
+                    self.show_report("remove location", r);
                 }
             }
             KeyCode::Char('X') => {
-                self.mode = Mode::ConfirmStripAll;
-                self.message = "strip ALL non-structural tags? (y/n)".into();
+                if let Some(doc) = &self.doc {
+                    match scrub::scrub(&doc.bytes, &self.keep) {
+                        Ok(preview) => {
+                            self.preview = Some(preview);
+                            self.mode = Mode::ConfirmScrub;
+                            self.message = "scrub everything? y apply · n cancel".into();
+                        }
+                        Err(err) => {
+                            self.message = format!("can't scrub: {err:#}");
+                            self.mode = Mode::Message;
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('1') => {
+                self.keep.icc = !self.keep.icc;
+                self.message = format!("scrub keeps: {}", self.keep.describe());
+            }
+            KeyCode::Char('2') => {
+                self.keep.orientation = !self.keep.orientation;
+                self.message = format!("scrub keeps: {}", self.keep.describe());
+            }
+            KeyCode::Char('3') => {
+                self.keep.date = !self.keep.date;
+                self.message = format!("scrub keeps: {}", self.keep.describe());
+            }
+            KeyCode::Char('t') => {
+                self.input.clear();
+                self.mode = Mode::ShiftInput;
+                self.message = "shift every timestamp by, e.g. +3d, -2h30m".into();
             }
             KeyCode::Char('p') => {
                 self.mode = Mode::PresetPicker;
                 self.preset_idx = 0;
                 self.message = "presets — Enter apply, Esc cancel".into();
+            }
+            KeyCode::Char('r') => {
+                if self.report.is_some() {
+                    self.mode = Mode::Report;
+                }
             }
             KeyCode::Char('s') => self.save(false)?,
             KeyCode::Char('S') => self.save(true)?,
@@ -234,11 +373,106 @@ impl App {
         Ok(false)
     }
 
+    fn handle_folder(&mut self, code: KeyCode) -> Result<bool> {
+        let Some(folder) = self.folder.as_mut() else {
+            self.mode = Mode::PathInput;
+            return Ok(false);
+        };
+        let n = folder.entries.len();
+        match code {
+            KeyCode::Char('q') | KeyCode::Esc => return Ok(true),
+            KeyCode::Char('j') | KeyCode::Down if n > 0 => {
+                let i = folder.state.selected().unwrap_or(0);
+                folder.state.select(Some((i + 1).min(n - 1)));
+            }
+            KeyCode::Char('k') | KeyCode::Up if n > 0 => {
+                let i = folder.state.selected().unwrap_or(0);
+                folder.state.select(Some(i.saturating_sub(1)));
+            }
+            KeyCode::Enter => {
+                let path = folder
+                    .state
+                    .selected()
+                    .and_then(|i| folder.entries.get(i))
+                    .map(|e| e.path.clone());
+                if let Some(path) = path {
+                    match MetaDoc::open(&path) {
+                        Ok(doc) => {
+                            self.reload_from(doc);
+                            self.mode = Mode::Browse;
+                            self.message = format!("opened {} · b back to folder", path.display());
+                        }
+                        Err(err) => {
+                            self.message = format!("open failed: {err:#}");
+                            self.mode = Mode::Message;
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('A') if n > 0 => {
+                self.mode = Mode::ConfirmBatch;
+                self.message = format!(
+                    "scrub all {n} photo(s) to *.cybermeta.* copies, keeping {}? y/n",
+                    self.keep.describe()
+                );
+            }
+            KeyCode::Char('R') => {
+                let dir = folder.dir.clone();
+                self.open_folder(&dir)?;
+            }
+            KeyCode::Char('o') => {
+                self.mode = Mode::PathInput;
+                self.input.clear();
+                self.message = "open image or folder".into();
+            }
+            KeyCode::Char('1') => self.keep.icc = !self.keep.icc,
+            KeyCode::Char('2') => self.keep.orientation = !self.keep.orientation,
+            KeyCode::Char('3') => self.keep.date = !self.keep.date,
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_confirm_batch(&mut self, code: KeyCode) -> Result<bool> {
+        if !matches!(code, KeyCode::Char('y') | KeyCode::Char('Y')) {
+            self.mode = Mode::Folder;
+            self.message = "batch scrub cancelled".into();
+            return Ok(false);
+        }
+        let Some(folder) = &self.folder else {
+            return Ok(false);
+        };
+        let (mut ok, mut failed, mut first_err) = (0, 0, None);
+        for e in &folder.entries {
+            let r = (|| -> Result<()> {
+                let bytes = std::fs::read(&e.path)?;
+                let out = scrub::scrub(&bytes, &self.keep)?;
+                write_atomic(&resolve_output(&e.path, None, false)?, &out.bytes)
+            })();
+            match r {
+                Ok(()) => ok += 1,
+                Err(err) => {
+                    failed += 1;
+                    first_err.get_or_insert_with(|| format!("{}: {err:#}", e.path.display()));
+                }
+            }
+        }
+        let dir = folder.dir.clone();
+        self.open_folder(&dir)?;
+        self.message = match first_err {
+            None => format!("scrubbed {ok} photo(s) → *.cybermeta.* copies"),
+            Some(e) => format!("scrubbed {ok}, {failed} failed — {e}"),
+        };
+        Ok(false)
+    }
+
     fn handle_path_input(&mut self, code: KeyCode) -> Result<bool> {
         match code {
             KeyCode::Esc => {
                 if self.doc.is_some() {
                     self.mode = Mode::Browse;
+                } else if self.folder.is_some() {
+                    self.mode = Mode::Folder;
                 } else {
                     return Ok(true);
                 }
@@ -296,7 +530,7 @@ impl App {
                     if let Some(doc) = self.doc.as_mut() {
                         match doc.set_string_tag(&tag.name, &self.input) {
                             Ok(()) => {
-                                self.refresh_tags();
+                                self.refresh();
                                 self.message = format!("set {} (unsaved)", tag.name);
                             }
                             Err(err) => self.message = format!("edit failed: {err:#}"),
@@ -315,19 +549,48 @@ impl App {
         Ok(false)
     }
 
-    fn handle_confirm_strip(&mut self, code: KeyCode) -> Result<bool> {
+    fn handle_shift(&mut self, code: KeyCode) -> Result<bool> {
         match code {
-            KeyCode::Char('y') | KeyCode::Char('Y') => {
-                if let Some(doc) = self.doc.as_mut() {
-                    let n = doc.strip_all();
-                    self.refresh_tags();
-                    self.message = format!("stripped {n} tags (unsaved)");
-                }
+            KeyCode::Esc => {
                 self.mode = Mode::Browse;
+                self.input.clear();
+            }
+            KeyCode::Enter => {
+                let text = std::mem::take(&mut self.input);
+                match parse_shift(&text) {
+                    Ok(seconds) => {
+                        if let Some(doc) = self.doc.as_mut() {
+                            let r = doc.date_shift(seconds);
+                            self.show_report("date shift", r);
+                        }
+                    }
+                    Err(err) => {
+                        self.message = format!("{err:#}");
+                        self.mode = Mode::Message;
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => self.input.push(c),
+            _ => {}
+        }
+        Ok(false)
+    }
+
+    fn handle_confirm_scrub(&mut self, code: KeyCode) -> Result<bool> {
+        let preview = self.preview.take();
+        match (code, preview) {
+            (KeyCode::Char('y') | KeyCode::Char('Y'), Some(_)) => {
+                if let Some(doc) = self.doc.as_mut() {
+                    let r = doc.scrub(&self.keep);
+                    self.show_report("scrub", r);
+                }
             }
             _ => {
                 self.mode = Mode::Browse;
-                self.message = "strip cancelled".into();
+                self.message = "scrub cancelled".into();
             }
         }
         Ok(false)
@@ -349,11 +612,11 @@ impl App {
             KeyCode::Enter => {
                 let preset = self.presets[self.preset_idx];
                 if let Some(doc) = self.doc.as_mut() {
-                    doc.apply_preset(preset)?;
-                    self.refresh_tags();
-                    self.message = format!("applied preset {} (unsaved)", preset.as_str());
+                    let r = doc.apply_preset(preset);
+                    self.show_report(preset.as_str(), r);
+                } else {
+                    self.mode = Mode::Browse;
                 }
-                self.mode = Mode::Browse;
             }
             _ => {}
         }
@@ -381,7 +644,7 @@ impl App {
                 } else {
                     format!("saved {}", path.display())
                 };
-                self.refresh_tags();
+                self.refresh();
             }
             Err(err) => self.message = format!("save failed: {err:#}"),
         }
@@ -400,6 +663,34 @@ impl App {
         Ok(())
     }
 
+    // ------------------------------------------------------------ drawing --
+
+    fn severity_color(&self, s: Option<Severity>) -> Color {
+        match s {
+            None => self.theme.acid_green,
+            Some(Severity::Low) => self.theme.cyan,
+            Some(Severity::Medium) => self.theme.orange,
+            Some(Severity::High) => self.theme.red,
+        }
+    }
+
+    fn risk_label(s: Option<Severity>) -> &'static str {
+        match s {
+            None => "CLEAN",
+            Some(Severity::Low) => "LOW",
+            Some(Severity::Medium) => "MEDIUM",
+            Some(Severity::High) => "HIGH",
+        }
+    }
+
+    fn panel(&self, title: impl Into<String>) -> Block<'static> {
+        Block::default()
+            .title(title.into())
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.line))
+            .style(Style::default().bg(self.theme.panel))
+    }
+
     fn draw(&mut self, frame: &mut ratatui::Frame) {
         let area = frame.area();
         let chunks = Layout::default()
@@ -413,12 +704,41 @@ impl App {
             .split(area);
 
         self.draw_header(frame, chunks[0]);
-        self.draw_body(frame, chunks[1]);
+        if self.doc.is_none() && self.folder.is_some() {
+            self.draw_folder(frame, chunks[1]);
+        } else {
+            self.draw_body(frame, chunks[1]);
+        }
         self.draw_input(frame, chunks[2]);
         self.draw_status(frame, chunks[3]);
 
-        if self.mode == Mode::PresetPicker {
-            self.draw_preset_modal(frame, area);
+        match self.mode {
+            Mode::PresetPicker => self.draw_preset_modal(frame, area),
+            Mode::ConfirmScrub => {
+                if let Some(p) = &self.preview {
+                    let lines = self.outcome_lines(p, true);
+                    self.draw_modal(
+                        frame,
+                        area,
+                        " scrub preview — y apply · n cancel ",
+                        lines,
+                        self.theme.hot_pink,
+                    );
+                }
+            }
+            Mode::Report => {
+                if let Some((label, o)) = &self.report {
+                    let lines = self.outcome_lines(o, false);
+                    self.draw_modal(
+                        frame,
+                        area,
+                        format!(" {label}: before → after "),
+                        lines,
+                        self.theme.acid_green,
+                    );
+                }
+            }
+            _ => {}
         }
     }
 
@@ -426,14 +746,19 @@ impl App {
         let dirty = self
             .doc
             .as_ref()
-            .map(|d| if d.dirty { " ● dirty" } else { "" })
+            .map(|d| if d.dirty { " ● unsaved" } else { "" })
             .unwrap_or("");
-        let path = self
-            .doc
+        let path = match (&self.doc, &self.folder) {
+            (Some(d), _) => d.path.display().to_string(),
+            (None, Some(f)) => format!("{}/", f.dir.display()),
+            _ => "(no file)".into(),
+        };
+        let risk = self
+            .audit
             .as_ref()
-            .map(|d| d.path.display().to_string())
-            .unwrap_or_else(|| "(no file)".into());
-        let line = Line::from(vec![
+            .filter(|_| self.doc.is_some())
+            .map(|a| a.risk);
+        let mut spans = vec![
             Span::styled(
                 " cybermeta ",
                 Style::default()
@@ -445,23 +770,35 @@ impl App {
                 format!(" {path}{dirty} "),
                 Style::default().fg(self.theme.white),
             ),
-            Span::styled(
-                format!(" theme:{} ", self.theme.name),
-                Style::default().fg(self.theme.muted),
-            ),
-        ]);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.line))
-            .style(Style::default().bg(self.theme.panel));
-        frame.render_widget(Paragraph::new(line).block(block), area);
+        ];
+        if let Some(r) = risk {
+            spans.push(Span::styled(
+                format!(" {} ", Self::risk_label(r)),
+                Style::default()
+                    .fg(self.theme.bg)
+                    .bg(self.severity_color(r))
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        spans.push(Span::styled(
+            format!(" theme:{} ", self.theme.name),
+            Style::default().fg(self.theme.muted),
+        ));
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).block(self.panel("")),
+            area,
+        );
     }
 
     fn draw_body(&mut self, frame: &mut ratatui::Frame, area: Rect) {
         let panes = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(area);
+        let right = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(6), Constraint::Length(8)])
+            .split(panes[1]);
 
         let items: Vec<ListItem> = self
             .filtered
@@ -477,11 +814,10 @@ impl App {
                 ListItem::new(Span::styled(label, Style::default().fg(self.theme.white)))
             })
             .collect();
-
         let list = List::new(items)
             .block(
                 Block::default()
-                    .title(" tags ")
+                    .title(format!(" EXIF tags ({}) ", self.tags.len()))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(self.theme.line))
                     .style(Style::default().bg(self.theme.bg)),
@@ -495,9 +831,13 @@ impl App {
             .highlight_symbol("▶ ");
         frame.render_stateful_widget(list, panes[0], &mut self.list_state);
 
+        if let Some(a) = &self.audit {
+            self.draw_privacy(frame, right[0], a, true);
+        }
+
         let detail = if let Some(tag) = self.selected_tag() {
             format!(
-                "name:  {}\nhex:   0x{:04X}\ngroup: {}\n\nvalue:\n{}",
+                "name:  {}\nhex:   0x{:04X}\ngroup: {}\nvalue: {}",
                 tag.name,
                 tag.hex,
                 tag.group.as_str(),
@@ -509,14 +849,286 @@ impl App {
         let detail = Paragraph::new(detail)
             .wrap(Wrap { trim: false })
             .style(Style::default().fg(self.theme.cyan))
+            .block(self.panel(" detail "));
+        frame.render_widget(detail, right[1]);
+    }
+
+    fn draw_privacy(&self, frame: &mut ratatui::Frame, area: Rect, a: &Audit, keep_line: bool) {
+        let color = self.severity_color(a.risk);
+        let mut lines: Vec<Line> = Vec::new();
+        if a.findings.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "✔ nothing found — safe to share",
+                Style::default()
+                    .fg(self.theme.acid_green)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+        for f in &a.findings {
+            let c = self.severity_color(Some(f.severity));
+            lines.push(Line::from(vec![
+                Span::styled("● ", Style::default().fg(c)),
+                Span::styled(
+                    format!("{:<9}", f.category.as_str()),
+                    Style::default().fg(c),
+                ),
+                Span::styled(
+                    format!("{} ", f.label),
+                    Style::default().fg(self.theme.white),
+                ),
+                Span::styled(
+                    truncate(&f.value, 48),
+                    Style::default().fg(self.theme.muted),
+                ),
+                Span::styled(
+                    format!("  {}", f.source),
+                    Style::default().fg(self.theme.purple),
+                ),
+            ]));
+        }
+        if !a.scrubbable {
+            lines.push(Line::from(Span::styled(
+                format!("! {} can't be scrubbed losslessly yet", a.format.as_str()),
+                Style::default().fg(self.theme.orange),
+            )));
+        }
+        if let Some(g) = &a.gps {
+            lines.push(Line::from(Span::styled(
+                format!("map: {}", g.map_url),
+                Style::default().fg(self.theme.muted),
+            )));
+        }
+        if keep_line {
+            let mark = |on: bool| if on { "✔" } else { "✘" };
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "scrub keeps: 1 colour {} · 2 rotation {} · 3 date {}",
+                    mark(self.keep.icc),
+                    mark(self.keep.orientation),
+                    mark(self.keep.date)
+                ),
+                Style::default().fg(self.theme.hot_pink),
+            )));
+        }
+        let title = format!(
+            " privacy · {} · {} high {} medium {} low ",
+            Self::risk_label(a.risk),
+            a.count(Severity::High),
+            a.count(Severity::Medium),
+            a.count(Severity::Low)
+        );
+        let widget = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(Span::styled(
+                    title,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(color))
+                .style(Style::default().bg(self.theme.panel)),
+        );
+        frame.render_widget(widget, area);
+    }
+
+    fn draw_folder(&mut self, frame: &mut ratatui::Frame, area: Rect) {
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
+        let Some(folder) = self.folder.as_mut() else {
+            return;
+        };
+        let theme = &self.theme;
+        let items: Vec<ListItem> = folder
+            .entries
+            .iter()
+            .map(|e| {
+                let name = e.path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                let (badge, color, count) = match &e.audit {
+                    Ok(a) => (
+                        Self::risk_label(a.risk),
+                        match a.risk {
+                            None => theme.acid_green,
+                            Some(Severity::Low) => theme.cyan,
+                            Some(Severity::Medium) => theme.orange,
+                            Some(Severity::High) => theme.red,
+                        },
+                        format!("{} finding(s)", a.findings.len()),
+                    ),
+                    Err(_) => ("ERROR", theme.red, String::new()),
+                };
+                ListItem::new(Line::from(vec![
+                    Span::styled(
+                        format!("{badge:<7}"),
+                        Style::default().fg(color).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!("{} ", truncate(name, 34)),
+                        Style::default().fg(theme.white),
+                    ),
+                    Span::styled(count, Style::default().fg(theme.muted)),
+                ]))
+            })
+            .collect();
+        let list = List::new(items)
             .block(
                 Block::default()
-                    .title(" detail ")
+                    .title(format!(" photos ({}) ", folder.entries.len()))
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(self.theme.line))
-                    .style(Style::default().bg(self.theme.panel)),
-            );
-        frame.render_widget(detail, panes[1]);
+                    .border_style(Style::default().fg(theme.line))
+                    .style(Style::default().bg(theme.bg)),
+            )
+            .highlight_style(Style::default().bg(theme.line).add_modifier(Modifier::BOLD))
+            .highlight_symbol("▶ ");
+        frame.render_stateful_widget(list, panes[0], &mut folder.state);
+        let selected = folder.state.selected().and_then(|i| folder.entries.get(i));
+        match selected.map(|e| &e.audit) {
+            Some(Ok(a)) => {
+                let a = a.clone();
+                self.draw_privacy(frame, panes[1], &a, true);
+            }
+            Some(Err(e)) => {
+                let w = Paragraph::new(e.clone()).block(self.panel(" error "));
+                frame.render_widget(w, panes[1]);
+            }
+            None => {
+                let w = Paragraph::new("no photos here").block(self.panel(" privacy "));
+                frame.render_widget(w, panes[1]);
+            }
+        }
+    }
+
+    fn outcome_lines(&self, o: &Outcome, preview: bool) -> Vec<Line<'static>> {
+        let t = &self.theme;
+        let mut lines = vec![Line::from(vec![
+            Span::styled("before ", Style::default().fg(t.muted)),
+            Span::styled(
+                format!(
+                    "{} ({} findings)",
+                    Self::risk_label(o.before.risk),
+                    o.before.findings.len()
+                ),
+                Style::default()
+                    .fg(self.severity_color(o.before.risk))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  →  after ", Style::default().fg(t.muted)),
+            Span::styled(
+                format!(
+                    "{} ({} findings)",
+                    Self::risk_label(o.after.risk),
+                    o.after.findings.len()
+                ),
+                Style::default()
+                    .fg(self.severity_color(o.after.risk))
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])];
+        lines.push(Line::from(""));
+        let verb = if preview { "will remove" } else { "removed" };
+        if o.removed.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("{verb}: no blocks"),
+                Style::default().fg(t.muted),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                format!("{verb}:"),
+                Style::default().fg(t.white),
+            )));
+        }
+        for r in &o.removed {
+            lines.push(Line::from(vec![
+                Span::styled("  − ", Style::default().fg(t.red)),
+                Span::styled(
+                    format!("{:<22}", r.kind_label()),
+                    Style::default().fg(t.white),
+                ),
+                Span::styled(
+                    format!("{} · {}", r.label, human_bytes(r.bytes)),
+                    Style::default().fg(t.muted),
+                ),
+            ]));
+        }
+        let gone: Vec<_> = o
+            .before
+            .findings
+            .iter()
+            .filter(|f| {
+                !o.after
+                    .findings
+                    .iter()
+                    .any(|g| g.label == f.label && g.source == f.source && g.value == f.value)
+            })
+            .collect();
+        if !gone.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                if preview {
+                    "no longer readable:"
+                } else {
+                    "gone:"
+                },
+                Style::default().fg(t.white),
+            )));
+            for f in gone.iter().take(12) {
+                lines.push(Line::from(vec![
+                    Span::styled("  ✔ ", Style::default().fg(t.acid_green)),
+                    Span::styled(format!("{} ", f.label), Style::default().fg(t.white)),
+                    Span::styled(truncate(&f.value, 40), Style::default().fg(t.muted)),
+                ]));
+            }
+            if gone.len() > 12 {
+                lines.push(Line::from(Span::styled(
+                    format!("  … and {} more", gone.len() - 12),
+                    Style::default().fg(t.muted),
+                )));
+            }
+        }
+        for n in &o.notes {
+            lines.push(Line::from(Span::styled(
+                format!("note: {n}"),
+                Style::default().fg(t.orange),
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            if preview {
+                format!("keeps: {} (toggle with 1/2/3 first)", self.keep.describe())
+            } else {
+                "unsaved · s save a copy · S overwrite · any key closes".to_string()
+            },
+            Style::default().fg(t.hot_pink),
+        )));
+        lines
+    }
+
+    fn draw_modal(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: Rect,
+        title: impl Into<String>,
+        lines: Vec<Line<'static>>,
+        border: Color,
+    ) {
+        let width = 84u16.min(area.width.saturating_sub(4));
+        let height = (lines.len() as u16 + 2).min(area.height.saturating_sub(2));
+        let rect = Rect::new(
+            (area.width.saturating_sub(width)) / 2,
+            (area.height.saturating_sub(height)) / 2,
+            width,
+            height,
+        );
+        frame.render_widget(Clear, rect);
+        let widget = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
+            Block::default()
+                .title(title.into())
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border))
+                .style(Style::default().bg(self.theme.panel)),
+        );
+        frame.render_widget(widget, rect);
     }
 
     fn draw_input(&self, frame: &mut ratatui::Frame, area: Rect) {
@@ -524,24 +1136,24 @@ impl App {
             Mode::Filter => (" filter ", self.filter.as_str()),
             Mode::Edit => (" edit value ", self.input.as_str()),
             Mode::PathInput => (" path ", self.input.as_str()),
-            Mode::ConfirmStripAll => (" confirm ", "strip all? y/n"),
+            Mode::ShiftInput => (" shift timestamps by ", self.input.as_str()),
+            Mode::ConfirmScrub => (" confirm ", "scrub everything? y/n"),
+            Mode::ConfirmBatch => (" confirm ", "scrub every photo in this folder? y/n"),
             Mode::PresetPicker => (" presets ", "j/k select · Enter apply"),
-            Mode::Browse | Mode::Message => (
+            Mode::Folder | Mode::Message | Mode::Report if self.doc.is_none() => (
+                " folder ",
+                "j/k move · Enter open · A scrub all · 1/2/3 keep · R rescan · o open · q quit",
+            ),
+            _ => (
                 " actions ",
-                "j/k move · / filter · Enter edit · g GPS · X all · p preset · s save · S in-place · e export · o open · q quit",
+                "X scrub · g location · p preset · t shift dates · 1/2/3 keep · Enter edit · / filter · s save · S in-place · e export · r report · o open · q quit",
             ),
         };
         let widget = Paragraph::new(Span::styled(
             text.to_string(),
             Style::default().fg(self.theme.hot_pink),
         ))
-        .block(
-            Block::default()
-                .title(title)
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(self.theme.line))
-                .style(Style::default().bg(self.theme.panel)),
-        );
+        .block(self.panel(title));
         frame.render_widget(widget, area);
     }
 
@@ -555,14 +1167,7 @@ impl App {
     }
 
     fn draw_preset_modal(&self, frame: &mut ratatui::Frame, area: Rect) {
-        let width = 60u16.min(area.width.saturating_sub(4));
-        let height = (self.presets.len() as u16 + 2).min(area.height.saturating_sub(4));
-        let x = (area.width.saturating_sub(width)) / 2;
-        let y = (area.height.saturating_sub(height)) / 2;
-        let rect = Rect::new(x, y, width, height);
-        frame.render_widget(Clear, rect);
-
-        let lines: Vec<Line> = self
+        let lines: Vec<Line<'static>> = self
             .presets
             .iter()
             .enumerate()
@@ -576,19 +1181,18 @@ impl App {
                     Style::default().fg(self.theme.white)
                 };
                 Line::from(Span::styled(
-                    format!("{marker} {} — {}", p.as_str(), p.description()),
+                    format!("{marker} {:<17} {}", p.as_str(), p.description()),
                     style,
                 ))
             })
             .collect();
-        let widget = Paragraph::new(lines).block(
-            Block::default()
-                .title(" spoof / scrub presets ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(self.theme.hot_pink))
-                .style(Style::default().bg(self.theme.panel)),
+        self.draw_modal(
+            frame,
+            area,
+            " scrub / spoof presets ",
+            lines,
+            self.theme.hot_pink,
         );
-        frame.render_widget(widget, rect);
     }
 }
 

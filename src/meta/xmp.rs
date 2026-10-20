@@ -224,6 +224,121 @@ impl XmpDoc {
     }
 }
 
+/// Every property in a packet as (local name, value), whatever its
+/// namespace: attributes on any element, element text, and rdf:li items
+/// (reported under their property's name). For privacy checks, where what
+/// matters is "is there a GPSLatitude / City / creator", not the schema.
+pub fn properties(xml: &str) -> Vec<(String, String)> {
+    let mut reader = NsReader::from_str(xml);
+    let mut out = Vec::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut text = String::new();
+    let skip = ["Description", "RDF", "xmpmeta", "Seq", "Bag", "Alt", "li"];
+    let attrs = |e: &quick_xml::events::BytesStart, out: &mut Vec<(String, String)>| {
+        for attr in e.attributes().flatten() {
+            let key = attr.key;
+            let prefix = key
+                .prefix()
+                .map(|p| p.as_ref().to_vec())
+                .unwrap_or_default();
+            if prefix == b"xmlns"
+                || key.as_ref() == b"xmlns"
+                || prefix == b"rdf"
+                || prefix == b"xml"
+            {
+                continue;
+            }
+            let local = String::from_utf8_lossy(key.local_name().as_ref()).into_owned();
+            let value = attr
+                .unescape_value()
+                .map(|v| v.into_owned())
+                .unwrap_or_default();
+            out.push((local, value));
+        }
+    };
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                attrs(&e, &mut out);
+                stack.push(String::from_utf8_lossy(e.local_name().as_ref()).into_owned());
+                text.clear();
+            }
+            Ok(Event::Empty(e)) => {
+                attrs(&e, &mut out);
+                let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                if !skip.contains(&local.as_str()) {
+                    out.push((local, String::new()));
+                }
+            }
+            Ok(Event::Text(t)) => text.push_str(&t.unescape().unwrap_or_default()),
+            Ok(Event::CData(t)) => text.push_str(&String::from_utf8_lossy(&t)),
+            Ok(Event::End(_)) => {
+                let Some(local) = stack.pop() else { break };
+                let property = if skip.contains(&local.as_str()) {
+                    stack
+                        .iter()
+                        .rev()
+                        .find(|s| !skip.contains(&s.as_str()))
+                        .cloned()
+                } else {
+                    Some(local)
+                };
+                let value = text.trim().to_string();
+                if let (Some(p), false) = (property, value.is_empty()) {
+                    out.push((p, value));
+                }
+                text.clear();
+            }
+            Ok(Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Property names that place a photo somewhere.
+pub fn is_location_property(local: &str) -> bool {
+    let l = local.to_ascii_lowercase();
+    l.starts_with("gps")
+        || matches!(
+            l.as_str(),
+            "city"
+                | "state"
+                | "country"
+                | "countrycode"
+                | "countryname"
+                | "provincestate"
+                | "sublocation"
+                | "location"
+                | "locationcreated"
+                | "locationshown"
+                | "worldregion"
+                | "latitude"
+                | "longitude"
+                | "altitude"
+        )
+}
+
+/// Does this packet say where the photo was taken? Text that won't parse
+/// is searched for the property names instead, so broken XML can't hide it.
+pub fn has_location(xml: &str) -> bool {
+    let props = properties(xml);
+    if props.iter().any(|(k, _)| is_location_property(k)) {
+        return true;
+    }
+    let lower = xml.to_ascii_lowercase();
+    [
+        ":gpslatitude",
+        ":gpslongitude",
+        ":city",
+        ":location",
+        ":country",
+        ":sublocation",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 /// The XMP packet in a file's bytes: a PNG XMP text chunk (inflated if
 /// compressed), else a plain `<x:xmpmeta>` element anywhere in the file.
 pub fn extract_packet(bytes: &[u8]) -> Option<String> {
