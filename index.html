@@ -64,7 +64,7 @@
       <div class="section-head reveal">
         <p class="eyebrow">01 / WHAT IT FINDS</p>
         <h2>Everything around <em>the picture.</em></h2>
-        <p>Version 0.2's <code>strip --all</code> only cleared EXIF. The v0.3 preview rebuilds the file from its picture data, so XMP, IPTC, comments and anything appended after the image go too. This source change is still in review; tap a card for details.</p>
+        <p>Version 0.2's <code>strip --all</code> only cleared EXIF. The merged v0.3 source rebuilds the file from its picture data, so XMP, IPTC, comments and anything appended after the image go too. Tap a card for details.</p>
       </div>
       <div class="leaks" id="leakGrid"></div>
     </div>
@@ -176,7 +176,7 @@
       <div class="section-head reveal">
         <p class="eyebrow">05 / INSTALL</p>
         <h2>One line. <em>Checksummed.</em></h2>
-        <p>The latest published CLI release is v0.1.0. The curl installer downloads that release for Linux or macOS (x86_64 or aarch64), verifies its SHA-256 and installs to <code>~/.local/bin</code>. The v0.3.0 source is in review and is not released yet.</p>
+        <p>The latest published CLI release is v0.1.0. The curl installer downloads that release for Linux or macOS (x86_64 or aarch64), verifies its SHA-256 and installs to <code>~/.local/bin</code>. Version 0.3 is merged to main but has not been published as a release yet.</p>
       </div>
       <div class="install reveal">
         <div class="card">
@@ -187,7 +187,7 @@
             <button class="tab" type="button" data-cmd="lib">ENGINE PREVIEW</button>
           </div>
           <div id="cmds"></div>
-          <p style="margin-top:.8rem;font-size:.9rem">The engine preview command points to the v0.3.0 review branch. Use it as an unreleased preview; the stable library tag will follow the source review.</p>
+          <p style="margin-top:.8rem;font-size:.9rem">The engine preview command uses the merged main branch until v0.3.0 is published as a stable tag.</p>
         </div>
         <div class="card">
           <h3>📱 On your phone</h3>
@@ -232,7 +232,7 @@
   window.CM_CMDS = {
     curl: ["curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh"],
     source: ["git clone https://github.com/cybercoretech/cybermeta && cd cybermeta", "cargo install --path ."],
-    lib: ['cybermeta = { git = "https://github.com/cybercoretech/cybermeta", branch = "feat/privacy-scrub", default-features = false }'],
+    lib: ['cybermeta = { git = "https://github.com/cybercoretech/cybermeta", branch = "main", default-features = false }'],
   };
 </script>
 <script src="assets/site.js"></script>
