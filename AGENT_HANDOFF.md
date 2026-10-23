@@ -3,24 +3,20 @@
 The state of the project for the next agent (or person) picking it up.
 Update it in the same PR as any significant change.
 
-## 📍 Repository state (2026-10-19)
+## 📍 Repository state (2026-10-23)
 
 - **Repo:** `cybercoretech/cybermeta` (org), with the local checkout at
   `~/Devspace/Cybercore/tooling/cybermeta` on Blackbox. The remote
   `cybercore-tech` is the old, suspended account; `origin` points at the org.
-- **`main`:** 0.2.0 (PR #9), plus two org-link commits.
-- **Current work:** branch `feat/privacy-scrub` → **0.3.0**.
-  - The lossless scrubber, `audit`, batch `scrub`, keep options, new presets.
-  - A TUI privacy panel and folder mode, and a library feature gate for the
-    Android app.
-  - One PR; the user merges it.
-- **Not tagged or released yet.** After the merge the user approved tagging
-  `v0.3.0`. The release workflow builds the binaries that `install.sh`
-  downloads, and Ghostframe and the Android app pin that tag.
-- **crates.io:** deliberately **not published** (the user's decision on
-  2026-10-19). The name `cybermeta` is free. Revisit once 0.3.x has been
-  used for a while. The user runs `cargo publish` themselves; the auto-mode
-  classifier blocks it.
+- **`main`:** v0.3.0 merged as PR #1 and tagged `v0.3.0`.
+- **Binary release:** the `v*` GitHub Actions workflow builds Linux and macOS
+  binaries and attaches them to a GitHub Release.
+- **crates.io:** `cybermeta` v0.3.0 was published on 2026-10-23 under
+  `ghost_443014`. The established registry release process is manual:
+  dry-run, then `cargo publish --locked`. The earlier decision to defer
+  publication has been superseded by the user's approval.
+- **v0.3.1 update:** adds the crates.io README card and cross-project links,
+  and fills in package metadata.
 - **Companion:** `cybercoretech/cybermeta-android-app`
   (`~/Devspace/Android/Cybermeta`) uses this crate with
   `default-features = false` through UniFFI.
@@ -128,4 +124,5 @@ Update it in the same PR as any significant change.
 
 - #2, #4, #5: link moves to cybercore-tech.
 - #9: v0.2.0, `show --summary` and `xmp write|read` (for Ghostframe Phase 3).
-- *(next)* `feat/privacy-scrub`: v0.3.0, as described above.
+- #1: v0.3.0, lossless scrubber, privacy audit, batch mode, and Android library
+  feature gate.

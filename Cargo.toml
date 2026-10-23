@@ -1,9 +1,12 @@
 [package]
 name = "cybermeta"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Find and remove what your photos give away: lossless metadata scrubbing, privacy audit, TUI and CLI"
 license = "MIT"
+repository = "https://github.com/cybercoretech/cybermeta"
+homepage = "https://cybercoretech.github.io/cybermeta/"
+documentation = "https://docs.rs/cybermeta"
 
 [[bin]]
 name = "cybermeta"

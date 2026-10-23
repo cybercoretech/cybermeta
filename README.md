@@ -1,10 +1,12 @@
 <p align="center">
-  <img src="assets/cybermeta-brand/cybermeta-hero.svg" alt="cybermeta — find and remove what your photos give away" width="820">
+  <img src="https://raw.githubusercontent.com/cybercoretech/cybermeta/v0.3.1/assets/cybermeta-brand/cybermeta-social-card.svg" alt="Cybermeta — find and remove what your photos give away" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://cybercoretech.github.io/cybermeta/">Site →</a> ·
-  <a href="https://github.com/cybercoretech/cybermeta-android-app">Cybermeta for Android →</a>
+  <a href="https://cybercoretech.github.io/cybermeta/">Cybermeta site →</a> ·
+  <a href="https://cybercoretech.github.io/cybermeta-android-app/">Android app →</a> ·
+  <a href="https://cybercoretech.github.io/fdroid/">F-Droid repository →</a> ·
+  <a href="https://cybercoretech.github.io/fdroid/#app=dev.cybercore.cybermeta">Cybermeta on F-Droid →</a>
 </p>
 
 [![CI](https://github.com/cybercoretech/cybermeta/actions/workflows/ci.yml/badge.svg)](https://github.com/cybercoretech/cybermeta/actions/workflows/ci.yml)
