@@ -176,7 +176,7 @@
       <div class="section-head reveal">
         <p class="eyebrow">05 / INSTALL</p>
         <h2>One line. <em>Checksummed.</em></h2>
-        <p>The latest published CLI release is v0.1.0. The curl installer downloads that release for Linux or macOS (x86_64 or aarch64), verifies its SHA-256 and installs to <code>~/.local/bin</code>. Version 0.3 is merged to main but has not been published as a release yet.</p>
+        <p>The latest CLI release is v0.3.1. The curl installer downloads it for Linux or macOS (x86_64 or aarch64), verifies its SHA-256 and installs to <code>~/.local/bin</code>. The same v0.3.1 engine is available to Rust apps as a stable tag and on crates.io.</p>
       </div>
       <div class="install reveal">
         <div class="card">
@@ -184,10 +184,10 @@
           <div class="tabs" role="tablist">
             <button class="tab on" type="button" data-cmd="curl">CURL INSTALL</button>
             <button class="tab" type="button" data-cmd="source">FROM SOURCE</button>
-            <button class="tab" type="button" data-cmd="lib">ENGINE PREVIEW</button>
+            <button class="tab" type="button" data-cmd="lib">ENGINE DEPENDENCY</button>
           </div>
           <div id="cmds"></div>
-          <p style="margin-top:.8rem;font-size:.9rem">The engine preview command uses the merged main branch until v0.3.0 is published as a stable tag.</p>
+          <p style="margin-top:.8rem;font-size:.9rem">The command below pins the stable v0.3.1 engine tag.</p>
         </div>
         <div class="card">
           <h3>📱 On your phone</h3>
@@ -232,7 +232,7 @@
   window.CM_CMDS = {
     curl: ["curl -fsSL https://raw.githubusercontent.com/cybercoretech/cybermeta/main/install.sh | sh"],
     source: ["git clone https://github.com/cybercoretech/cybermeta && cd cybermeta", "cargo install --path ."],
-    lib: ['cybermeta = { git = "https://github.com/cybercoretech/cybermeta", branch = "main", default-features = false }'],
+    lib: ['cybermeta = { git = "https://github.com/cybercoretech/cybermeta", tag = "v0.3.1", default-features = false }'],
   };
 </script>
 <script src="assets/site.js"></script>

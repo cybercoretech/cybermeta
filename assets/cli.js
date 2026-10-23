@@ -1,5 +1,5 @@
 // The hero terminal: types a real cybermeta session (audit → scrub →
-// audit again), then loops. Output matches cybermeta 0.3.0.
+// audit again), then loops. Output matches cybermeta 0.3.1.
 "use strict";
 (() => {
   const pre = document.querySelector("#termOut");
