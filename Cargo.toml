@@ -25,7 +25,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 clap = { optional = true, version = "4", features = ["derive"] }
 crc32fast = "1.5.2"
 crossterm = { version = "0.29", optional = true }
-cybercore = { version = "0.4", optional = true }
+cybercore = { version = "0.8", optional = true }
 little_exif = "0.6"
 miniz_oxide = "0.8"
 nom-exif = "3.8.0"
