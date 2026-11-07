@@ -19,6 +19,59 @@
   <link rel="stylesheet" href="https://cybercoretech.github.io/kit/chooser.css">
   <script>window.SITE = Object.assign(window.SITE || {}, {"siteLabel": "Tag Redact"});</script>
   <script type="module" src="https://cybercoretech.github.io/kit/chooser.js"></script>
+  <style id="cc-mobile-first">
+/* Mobile floor (phones + tablets): readable text and finger-sized targets.
+   Generated per range from what renders under 11px / 24px; desktop untouched. */
+@media (max-width: 600px) {
+  span > small,
+  span.sev,
+  span.more,
+  span.local,
+  div.blockmap-legend > span,
+  button.tab,
+  button.copy { font-size: 11px !important; }
+}
+@media (min-width: 601px) and (max-width: 860px) {
+  span > small,
+  span.theme-label,
+  span.sev,
+  span.more,
+  span.local,
+  div.blockmap-legend > span,
+  button.tab,
+  button.copy { font-size: 11px !important; }
+}
+@media (min-width: 861px) and (max-width: 1024px) {
+  span > small,
+  span.theme-label,
+  span.sev,
+  span.more,
+  span.local,
+  div.blockmap-legend > span,
+  button.tab,
+  button.copy { font-size: 11px !important; }
+}
+@media (pointer: coarse) {
+  div.links > a,
+  nav.main-nav > a { min-height: 24px; min-width: 24px; }
+}
+/* Mobile floor (phones + tablets): readable text and finger-sized targets.
+   Generated per range from what renders under 11px / 24px; desktop untouched. */
+@media (max-width: 600px) {
+  div.command > code { font-size: 11px !important; }
+}
+/* Layout fixes: phones and tablets only; laptops and desktops untouched. */
+@media (max-width: 1024px) {
+  /* Mobile first: nothing may make the page wider than the screen.
+     Grid/flex columns may shrink below their widest line; code scrolls in place. */
+  pre { max-width: 100%; overflow-x: auto; }
+  img, video { max-width: 100%; height: auto; }
+  div.tui-grid > * { min-width: 0; }
+  div.tui-box > * { min-width: 0; }
+  /* Long paths and URLs in inline code may break anywhere instead of widening the page. */
+  :not(pre) > code { overflow-wrap: anywhere; }
+}
+  </style>
 </head>
 <body>
 <canvas class="backdrop" id="particles" aria-hidden="true"></canvas>
